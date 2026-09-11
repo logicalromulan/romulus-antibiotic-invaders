@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#050a12">
+<title>Romulus Antibiotic Invaders</title>
+<style>
+:root{
+  --bg:#050a12;
+  --panel:#0d1724;
+  --line:#22364c;
+  --text:#eef6ff;
+  --muted:#9fb2c7;
+  --accent:#71d7ff;
+  --good:#75f59a;
+  --warn:#ffd166;
+  --bad:#ff6b6b;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:linear-gradient(#04070c,#07111c);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Segoe UI",sans-serif}
+body{min-height:100vh;display:flex;justify-content:center;overscroll-behavior:none}
+.app{width:min(100%,980px);padding:10px 10px calc(12px + env(safe-area-inset-bottom))}
+.title{font-size:clamp(18px,4.8vw,30px);font-weight:800;text-align:center;letter-spacing:.4px;margin:2px 0}
+.subtitle{text-align:center;color:var(--muted);font-size:12px;margin-bottom:8px}
+.hud{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:7px}
+.hud .box{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:6px;text-align:center;font-size:11px;color:var(--muted)}
+.hud b{display:block;color:var(--accent);font-size:18px;margin-top:2px}
+#field{
+  width:100%;
+  aspect-ratio: 3 / 4;
+  max-height:66vh;
+  display:block;
+  background:#02060b;
+  border:2px solid var(--line);
+  border-radius:13px;
+  touch-action:none;
+}
+.armory{margin-top:8px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:8px}
+.armory-title{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:6px;font-size:12px;color:var(--muted)}
+.drug-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.drug{
+  min-height:48px;border:1px solid #35536f;background:#132437;color:var(--text);border-radius:9px;
+  font-size:12px;font-weight:750;padding:5px 4px;line-height:1.1
+}
+.drug small{display:block;color:var(--muted);font-size:10px;margin-top:3px;font-weight:600}
+.drug.active{outline:2px solid var(--warn);background:#20384f}
+.actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:7px}
+.actions button{
+  min-height:42px;border:1px solid #35536f;background:#0f2132;color:var(--text);
+  border-radius:9px;font-size:13px;font-weight:700
+}
+.feedback{margin-top:7px;min-height:58px;border:1px solid #1f3449;border-radius:9px;background:#07111b;padding:8px;font-size:12px;line-height:1.35}
+.good{color:var(--good)} .bad{color:var(--bad)} .warn{color:var(--warn)}
+.note{margin-top:6px;color:var(--muted);font-size:10px;line-height:1.25}
+@media (min-width:700px){
+  .app{padding:14px}
+  #field{aspect-ratio:4/3;max-height:70vh}
+  .drug-grid{grid-template-columns:repeat(6,1fr)}
+  .drug{font-size:13px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="title">🦠 Antibiotic Invaders</div>
+  <div class="subtitle">Project Romulus Academy • Cadet Spectrum Mode</div>
+
+  <div class="hud">
+    <div class="box">SCORE<b id="score">0</b></div>
+    <div class="box">LIVES<b id="lives">5</b></div>
+    <div class="box">WAVE<b id="wave">1</b></div>
+    <div class="box">STREAK<b id="streak">0</b></div>
+  </div>
+
+  <canvas id="field" width="900" height="1200"></canvas>
+
+  <div class="armory">
+    <div class="armory-title">
+      <span>SELECT DRUG → TAP A FALLING MICROBE</span>
+      <span id="loaded">Loaded: VAN</span>
+    </div>
+    <div class="drug-grid" id="drugGrid"></div>
+    <div class="actions">
+      <button id="start">▶ Start</button>
+      <button id="pause">⏸ Pause</button>
+      <button id="tricorder">🖖 Tricorder</button>
+    </div>
+    <div class="feedback" id="feedback">
+      Every falling organism is labeled. Choose an active antibiotic, then tap the organism to fire.
+    </div>
+    <div class="note">Educational trainer only. Real treatment depends on infection site, susceptibilities, severity, allergies, renal function, source control, and local resistance patterns.</div>
+  </div>
+</div>
+
+<script>
+const canvas=document.getElementById('field');
+const ctx=canvas.getContext('2d');
+const scoreEl=document.getElementById('score'), livesEl=document.getElementById('lives'),
+      waveEl=document.getElementById('wave'), streakEl=document.getElementById('streak'),
+      loadedEl=document.getElementById('loaded'), feedback=document.getElementById('feedback');
+
+const DRUGS=[
+ {id:'VAN',name:'Vancomycin'},
+ {id:'DAP',name:'Daptomycin'},
+ {id:'LZD',name:'Linezolid'},
+ {id:'CTX',name:'Ceftriaxone'},
+ {id:'FEP',name:'Cefepime'},
+ {id:'TZP',name:'Pip/Tazo'},
+];
+
+const BUGS=[
+ {
+  label:'MRSA', species:'S. aureus', gram:'GPC clusters',
+  color:'#a64b8f', shape:'cluster',
+  active:['VAN','DAP','LZD'],
+  preferred:['VAN','LZD','DAP'],
+  pearl:'MRSA: vancomycin, linezolid, and daptomycin are active options. Daptomycin is not used for pneumonia.'
+ },
+ {
+  label:'MSSA', species:'S. aureus', gram:'GPC clusters',
+  color:'#c260a6', shape:'cluster',
+  active:['VAN','DAP','LZD','TZP'],
+  preferred:['TZP'],
+  pearl:'MSSA is usually better treated with an antistaphylococcal β-lactam when appropriate; vancomycin may be active but is not preferred.'
+ },
+ {
+  label:'E. coli', species:'E. coli', gram:'GNR',
+  color:'#ef6a76', shape:'rod',
+  active:['CTX','FEP','TZP'],
+  preferred:['CTX'],
+  pearl:'Susceptible E. coli is commonly covered by ceftriaxone; resistance mechanisms can change this.'
+ },
+ {
+  label:'Pseudomonas', species:'P. aeruginosa', gram:'GNR',
+  color:'#63b94c', shape:'rodFlag',
+  active:['FEP','TZP'],
+  preferred:['FEP','TZP'],
+  pearl:'Cefepime and piperacillin/tazobactam are antipseudomonal. Ceftriaxone is not.'
+ },
+ {
+  label:'Enterococcus', species:'E. faecalis', gram:'GPC pairs/chains',
+  color:'#5a90e8', shape:'chain',
+  active:['VAN','LZD','DAP'],
+  preferred:['VAN'],
+  pearl:'Enterococcus has an intrinsic cephalosporin gap. Vancomycin, linezolid, or daptomycin may be active depending on susceptibility.'
+ }
+];
+
+let chosen='VAN', bugs=[], score=0,lives=5,wave=1,streak=0,running=false,paused=false,last=0,spawnClock=0;
+
+function makeDrugButtons(){
+ const grid=document.getElementById('drugGrid'); grid.innerHTML='';
+ DRUGS.forEach((d,i)=>{
+  const b=document.createElement('button');
+  b.className='drug'+(i===0?' active':'');
+  b.innerHTML=`${d.id}<small>${d.name}</small>`;
+  b.onclick=()=>{
+    chosen=d.id;
+    [...grid.children].forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    loadedEl.textContent='Loaded: '+d.id;
+  };
+  grid.appendChild(b);
+ });
+}
+makeDrugButtons();
+
+function reset(){
+ bugs=[];score=0;lives=5;wave=1;streak=0;running=true;paused=false;spawnClock=0;last=performance.now();
+ updateHud();
+ feedback.innerHTML='Battle started. <span class="good">Choose a drug and tap a falling organism.</span>';
+}
+function updateHud(){scoreEl.textContent=score;livesEl.textContent=lives;waveEl.textContent=wave;streakEl.textContent=streak;}
+
+function spawnBug(){
+ const src=BUGS[Math.floor(Math.random()*BUGS.length)];
+ const scale=canvas.width/900;
+ const w=175*scale,h=72*scale;
+ bugs.push({...src,x:20*scale+Math.random()*(canvas.width-w-40*scale),y:-h,w,h,speed:(52+wave*7+Math.random()*18)*scale});
+}
+
+function bg(){
+ ctx.fillStyle='#02060b';ctx.fillRect(0,0,canvas.width,canvas.height);
+ ctx.fillStyle='#102131';
+ for(let i=0;i<85;i++){let x=(i*113)%canvas.width,y=(i*71)%canvas.height;ctx.fillRect(x,y,2,2)}
+}
+
+function drawBug(b){
+ const s=canvas.width/900;
+ ctx.save();
+ ctx.translate(b.x,b.y);
+ ctx.fillStyle=b.color;
+ ctx.strokeStyle='rgba(255,255,255,.22)';
+ ctx.lineWidth=1.5*s;
+
+ if(b.shape==='cluster'){
+  const pts=[[26,26],[42,19],[56,28],[35,39],[51,43],[22,43],[47,55]];
+  pts.forEach(([x,y])=>{ctx.beginPath();ctx.arc(x*s,y*s,11*s,0,Math.PI*2);ctx.fill();ctx.stroke()});
+ } else if(b.shape==='chain'){
+  [22,40,58,76].forEach((x,i)=>{ctx.beginPath();ctx.arc(x*s,(34+(i%2)*5)*s,9*s,0,Math.PI*2);ctx.fill();ctx.stroke()});
+ } else {
+  ctx.beginPath();
+  ctx.roundRect(15*s,23*s,68*s,24*s,12*s);ctx.fill();ctx.stroke();
+  if(b.shape==='rodFlag'){
+    ctx.beginPath();ctx.moveTo(80*s,30*s);ctx.quadraticCurveTo(110*s,15*s,120*s,35*s);ctx.stroke();
+  }
+ }
+
+ // Smallest comfortably legible permanent label
+ const tx=92*s, ty=25*s;
+ ctx.font=`700 ${Math.max(15,17*s)}px -apple-system,BlinkMacSystemFont,sans-serif`;
+ ctx.textBaseline='top';
+ const line1=b.label, line2=b.species;
+ const mw=Math.max(ctx.measureText(line1).width,ctx.measureText(line2).width)+12*s;
+ ctx.fillStyle='rgba(0,0,0,.68)';
+ ctx.fillRect(tx-5*s,ty-3*s,mw,40*s);
+ ctx.fillStyle='#f7fbff';
+ ctx.fillText(line1,tx,ty);
+ ctx.font=`600 ${Math.max(13,14*s)}px -apple-system,BlinkMacSystemFont,sans-serif`;
+ ctx.fillStyle='#c8d6e5';
+ ctx.fillText(line2,tx,ty+19*s);
+ ctx.restore();
+}
+
+function drawCannon(){
+ const s=canvas.width/900, cx=canvas.width/2, y=canvas.height-75*s;
+ ctx.fillStyle='#7dd3fc'; ctx.fillRect(cx-9*s,y-35*s,18*s,35*s);
+ ctx.fillStyle='#1b3248'; ctx.fillRect(cx-43*s,y,86*s,20*s);
+ ctx.fillStyle='#eef6ff'; ctx.font=`700 ${16*s}px -apple-system,sans-serif`;ctx.textAlign='center';
+ ctx.fillText(chosen,cx,y-44*s);ctx.textAlign='start';
+}
+
+function frame(t){
+ requestAnimationFrame(frame);
+ bg();bugs.forEach(drawBug);drawCannon();
+ if(!running||paused){last=t;return}
+ const dt=Math.min((t-last)/1000,.05);last=t;
+ spawnClock+=dt;
+ const interval=Math.max(.65,1.6-wave*.08);
+ if(spawnClock>interval){spawnClock=0;spawnBug()}
+ for(let i=bugs.length-1;i>=0;i--){
+   bugs[i].y+=bugs[i].speed*dt;
+   if(bugs[i].y>canvas.height){
+     bugs.splice(i,1);lives--;streak=0;updateHud();
+     feedback.innerHTML='<span class="warn">A microbe reached the bottom.</span>';
+     if(lives<=0){running=false;feedback.innerHTML=`<span class="bad"><b>GAME OVER</b></span> — Score ${score}.`}
+   }
+ }
+}
+
+function point(ev){
+ const r=canvas.getBoundingClientRect(), p=ev.touches?ev.touches[0]:ev;
+ return {x:(p.clientX-r.left)*canvas.width/r.width,y:(p.clientY-r.top)*canvas.height/r.height};
+}
+
+function fire(ev){
+ if(!running||paused)return;
+ ev.preventDefault();
+ const p=point(ev);
+ for(let i=bugs.length-1;i>=0;i--){
+   const b=bugs[i];
+   if(p.x>=b.x&&p.x<=b.x+b.w&&p.y>=b.y&&p.y<=b.y+b.h){
+     bugs.splice(i,1);
+     if(b.active.includes(chosen)){
+       const optimal=b.preferred.includes(chosen);
+       const pts=optimal?100:60;
+       score+=pts;streak++;
+       wave=1+Math.floor(score/700);
+       feedback.innerHTML=`💥 <b>${chosen}</b> hit <b>${b.label} (${b.species})</b> — `+
+         (optimal?`<span class="good">DIRECT HIT +${pts}</span>`:`<span class="warn">ACTIVE +${pts}</span>`) +
+         `<br>${b.pearl}`;
+     } else {
+       lives--;streak=0;
+       feedback.innerHTML=`🛡️ <b>${b.label} (${b.species})</b> resisted <b>${chosen}</b>. `+
+         `<span class="bad">NO RELIABLE COVERAGE.</span><br>${b.pearl}`;
+     }
+     updateHud();
+     if(lives<=0){running=false;feedback.innerHTML+=`<br><span class="bad"><b>GAME OVER.</b></span>`}
+     return;
+   }
+ }
+}
+
+canvas.addEventListener('click',fire);
+canvas.addEventListener('touchstart',fire,{passive:false});
+
+document.getElementById('start').onclick=reset;
+document.getElementById('pause').onclick=()=>{
+ if(!running)return;
+ paused=!paused;
+ document.getElementById('pause').textContent=paused?'▶ Resume':'⏸ Pause';
+};
+document.getElementById('tricorder').onclick=()=>{
+ paused=true;
+ document.getElementById('pause').textContent='▶ Resume';
+ feedback.innerHTML='<b>🖖 Tricorder:</b> Names stay visible in normal play. Shape + Gram appearance + organism name should become one recognition pattern.';
+};
+
+updateHud();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
